@@ -12,12 +12,15 @@ import (
 func main(){
 	r := chi.NewRouter()
 
-	r.Get("/test", func(w http.ResponseWriter, r *http.Request){
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request){
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"msg":"done"})
+		json.NewEncoder(w).Encode(map[string]string{"status":"ok"})
 	})
 
 	fmt.Println("server is runnning on PORT: ", 8080)
-	http.ListenAndServe(":8080", r)
+	err := http.ListenAndServe(":8080", r)
+	if err != nil {
+		fmt.Println("failed to start the server: ", err)
+	}
 }
