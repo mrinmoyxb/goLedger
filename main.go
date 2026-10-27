@@ -1,21 +1,20 @@
 package main
 
-
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
-	"encoding/json"
 
 	"github.com/go-chi/chi/v5"
 )
 
-func main(){
+func main() {
 	r := chi.NewRouter()
 
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request){
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status":"ok"})
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 
 	fmt.Println("server is runnning on PORT: ", 8080)
