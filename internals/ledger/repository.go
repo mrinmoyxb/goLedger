@@ -59,7 +59,7 @@ func (r *LedgerRepository) PostTransfer(ctx context.Context, t Transaction) (int
 		currency,
 	).Scan(&transactionID)
 
-	//* Step 3: Since it doesn't return any row, then let's check for existing row with the help of the idempotency_key
+	//* Step 3: Since it doesn't return any row, then let's check for existing row with the help of the idempotency_key and return the existing info
 	if errors.Is(err, pgx.ErrNoRows) {
 		var existingSourceID int64
 		var existingDestinationID int64
@@ -92,6 +92,7 @@ func (r *LedgerRepository) PostTransfer(ctx context.Context, t Transaction) (int
 		return 0, fmt.Errorf("insert ledger transaction: %w", err)
 	}
 
+	//* Step 4: applied row level lock on both accounts
 	rows, err := tx.Query(ctx,
 		`SELECT id, currency, balance_minor FROM ledger_accounts WHERE id = ANY($1::bigint[]) ORDER BY id FOR UPDATE`,
 		[]int64{t.SourceAccountID, t.DestinationAccountID})
@@ -126,7 +127,7 @@ func (r *LedgerRepository) PostTransfer(ctx context.Context, t Transaction) (int
 		return 0, errors.New("account not found")
 	}
 
-	//* Step 4: Validation
+	//* Step 5: Validation
 	if source.Currency != currency || destination.Currency != currency {
 		return 0, errors.New("currency mismatch")
 	}
@@ -139,7 +140,7 @@ func (r *LedgerRepository) PostTransfer(ctx context.Context, t Transaction) (int
 		return 0, fmt.Errorf("commit transfer: %w", err)
 	}
 
-	//* Step 5: Insert the debit and credit entry
+	//* Step 6: Insert the debit and credit entry
 	_, err = tx.Exec(ctx,
 		`INSERT INTO ledger_entries (transaction_id, account_id, currency, entry_type, amount_minor) 
 	VALUES ($1, $2, $3, 'debit', $4)
@@ -156,7 +157,7 @@ func (r *LedgerRepository) PostTransfer(ctx context.Context, t Transaction) (int
 		return 0, fmt.Errorf("insert credit entry: %w", err)
 	}
 
-	//* Step 6: Update source and destination balance
+	//* Step 7: Update source and destination balance
 	_, err = tx.Exec(ctx,
 		`UPDATE ledger_accounts SET balance_minor = balance_minor - $1 WHERE id = $2`,
 		t.AmountMinor, t.SourceAccountID,
@@ -177,6 +178,7 @@ func (r *LedgerRepository) PostTransfer(ctx context.Context, t Transaction) (int
 		return 0, fmt.Errorf("credit destination account: %w", err)
 	}
 
+	//* Step 8: transaction ends
 	if err = tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("commit idempotent retry: %w", err)
 	}
