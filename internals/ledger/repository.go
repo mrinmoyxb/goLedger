@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/golang-jwt/jwt/request"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -19,6 +20,19 @@ type Transaction struct {
 	SourceAccountID      int64
 	DestinationAccountID int64
 	AmountMinor          int64
+}
+
+type TransactionInfo struct {
+	ID                   int64
+	IdempotencyKey       string
+	RequestHash          string
+	TransactionType      string
+	AmountMinor          int64
+	Currency             string
+	TransactionStatus    string
+	Reference            string
+	ReverseTransactionId int64
+	CreatedAt            int64
 }
 
 type LedgerRepository struct {
@@ -184,4 +198,37 @@ func (r *LedgerRepository) PostTransfer(ctx context.Context, t Transaction) (int
 	}
 
 	return transactionID, nil
+}
+
+func (r *LedgerRepository) GetLedgerTransactionByID(ctx context.Context, transaction_id int64) (*TransactionInfo, error) {
+	if transaction_id <= 0 {
+		return nil, errors.New("invalid transaction id")
+	}
+
+	transaction := &TransactionInfo{}
+
+	err := r.db.QueryRow(ctx,
+		`SELECT id, idempotency_key, request_hash, transaction_type, amount_minor, currency, transaction_status, reference, reverses_transaction_id, created_at 
+		FROM ledger_transaction WHERE id = $1
+		`, transaction_id,
+	).Scan(
+		&transaction.ID,
+		&transaction.IdempotencyKey,
+		&transaction.RequestHash,
+		&transaction.TransactionType,
+		&transaction.AmountMinor,
+		&transaction.Currency,
+		&transaction.TransactionStatus,
+		&transaction.Reference,
+		&transaction.ReverseTransactionId,
+		&transaction.CreatedAt,
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("account not found: %w", err)
+		}
+		return nil, fmt.Errorf("get ledger account by id: %w", err)
+	}
+	return transaction, nil
 }

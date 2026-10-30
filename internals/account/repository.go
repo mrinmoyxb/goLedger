@@ -32,8 +32,8 @@ type AccountInfo struct {
 }
 
 type Pagination struct {
-	Limit int
-	Offset int 
+	Limit  int
+	Offset int
 }
 
 type AccountRepository struct {
@@ -117,14 +117,14 @@ func (r *AccountRepository) GetAccountByIdsForUpdate(ctx context.Context, tx pgx
 
 	accounts := make(map[int64]AccountInfo, len(ids))
 
-	rows, err := tx.Query(ctx, 
-	`SELECT id, owner_type, owner_id, account_type, purpose, currency, balance_minor, account_status, created_at FROM ledger_accounts 
-		WHERE id = ANY($1::bigint[]) ORDER BY id FOR UPDATE`, 
-	ids)
+	rows, err := tx.Query(ctx,
+		`SELECT id, owner_type, owner_id, account_type, purpose, currency, balance_minor, account_status, created_at FROM ledger_accounts 
+		WHERE id = ANY($1::bigint[]) ORDER BY id FOR UPDATE`,
+		ids)
 
 	if err != nil {
-        return nil, fmt.Errorf("get accounts: %w", err)
-    }
+		return nil, fmt.Errorf("get accounts: %w", err)
+	}
 
 	defer rows.Close()
 
@@ -147,15 +147,15 @@ func (r *AccountRepository) GetAccountByIdsForUpdate(ctx context.Context, tx pgx
 		accounts[account.ID] = account
 	}
 
-	 if err := rows.Err(); err != nil {
-        return nil, fmt.Errorf("iterate accounts: %w", err)
-    }
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate accounts: %w", err)
+	}
 
-    if len(accounts) != len(ids) {
-        return nil, errors.New("one or more accounts not found")
-    }
+	if len(accounts) != len(ids) {
+		return nil, errors.New("one or more accounts not found")
+	}
 
-    return accounts, nil
+	return accounts, nil
 
 }
 
@@ -238,7 +238,7 @@ func (r *AccountRepository) UpdateAccountStatus(ctx context.Context, id int64, s
 	return nil
 }
 
-func (r *AccountRepository) ListAccounts(ctx context.Context, pagination Pagination)([]AccountInfo, error){
+func (r *AccountRepository) ListAccounts(ctx context.Context, pagination Pagination) ([]AccountInfo, error) {
 	if pagination.Limit <= 0 {
 		return nil, errors.New("invalid pagination limit")
 	}
@@ -248,7 +248,7 @@ func (r *AccountRepository) ListAccounts(ctx context.Context, pagination Paginat
 	}
 
 	rows, err := r.db.Query(ctx,
-	`SELECT id, owner_type, owner_id, account_type, purpose, currency, balance_minor, account_status, created_at
+		`SELECT id, owner_type, owner_id, account_type, purpose, currency, balance_minor, account_status, created_at
 		FROM ledger_accounts ORDER BY id LIMIT $1 OFFSET $2`,
 		pagination.Limit, pagination.Offset,
 	)
@@ -282,11 +282,11 @@ func (r *AccountRepository) ListAccounts(ctx context.Context, pagination Paginat
 		accounts = append(accounts, account)
 	}
 
-	 if err := rows.Err(); err != nil {
-        return nil, fmt.Errorf("iterate accounts: %w", err)
-    }
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate accounts: %w", err)
+	}
 
-    return accounts, nil
+	return accounts, nil
 }
 
 func (r *AccountRepository) AccountExists(ctx context.Context, id int64) (bool, error) {
@@ -297,8 +297,8 @@ func (r *AccountRepository) AccountExists(ctx context.Context, id int64) (bool, 
 	var accountID int64
 
 	err := r.db.QueryRow(ctx,
-	`SELECT id FROM ledger_accounts WHERE id = $1`, 
-	id).Scan(&accountID)
+		`SELECT id FROM ledger_accounts WHERE id = $1`,
+		id).Scan(&accountID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil
