@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
-	"github.com/golang-jwt/jwt/request"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -35,6 +35,17 @@ type TransactionInfo struct {
 	CreatedAt            int64
 }
 
+type AccountTransaction struct {
+	TransactionID        int64
+	TransactionType      string
+	EntryType            string
+	AmountMinor          int64
+	Currency             string
+	Reference            string
+	CreatedAt            time.Time
+	PostedAt             time.Time
+}
+
 type LedgerRepository struct {
 	db *pgxpool.Pool
 }
@@ -43,7 +54,7 @@ func NewLedgerRepository(db *pgxpool.Pool) *LedgerRepository {
 	return &LedgerRepository{db: db}
 }
 
-func (r *LedgerRepository) PostTransfer(ctx context.Context, t Transaction) (int64, error) {
+func (r *LedgerRepository) CreateLedgerTransaction(ctx context.Context, t Transaction) (int64, error) {
 
 	//* Step 1: Validation of input:-> idempotency_key, source_account, destination_account, amount_minor,
 	if t.IdempotencyKey == "" || t.SourceAccountID <= 0 || t.DestinationAccountID <= 0 || t.SourceAccountID == t.DestinationAccountID || t.AmountMinor <= 0 {
@@ -226,9 +237,97 @@ func (r *LedgerRepository) GetLedgerTransactionByID(ctx context.Context, transac
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("account not found: %w", err)
+			return nil, fmt.Errorf("transaction not found: %w", err)
 		}
-		return nil, fmt.Errorf("get ledger account by id: %w", err)
+		return nil, fmt.Errorf("get ledger transaction by transaction_id: %w", err)
 	}
+
 	return transaction, nil
+}
+
+func (r *LedgerRepository) GetLedgerTransactionByReference(ctx context.Context, reference string) (*TransactionInfo, error){
+	transaction := &TransactionInfo{}
+
+	err := r.db.QueryRow(ctx,
+	`SELECT id, idempotency_key, request_hash, transaction_type, amount_minor, currency, transaction_status, reference, 
+		reverses_transaction_id, created_at FROM ledger_transaction WHERE reference = $1 
+		RETURNING id, idempotency_key, request_hash, transaction_type, amount_minor, currency, transaction_status, reference,
+		reverses_transaction_id, created_at`, reference,
+	).Scan(
+		&transaction.ID,
+		&transaction.IdempotencyKey,
+		&transaction.RequestHash,
+		&transaction.TransactionType,
+		&transaction.AmountMinor,
+		&transaction.Currency,
+		&transaction.TransactionStatus,
+		&transaction.Reference,
+		&transaction.ReverseTransactionId,
+		&transaction.CreatedAt,
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("transaction not found: %w", err)
+		}
+		return nil, fmt.Errorf("get ledger transaction by reference: %w", err)
+	}
+
+	return transaction, nil
+}
+
+func (r *LedgerRepository) ListTransactionsByAccount(ctx context.Context, accountID int64, limit int, offset int) ([]AccountTransaction, error){
+	if accountID <= 0 {
+		return nil, errors.New("invalid account id")
+	}
+
+	rows, err := r.db.Query(ctx,
+	`SELECT 
+		lt.id,
+		lt.transaction_type,
+		le.entry_type,
+		le.amount_minor,
+		lt.currency,
+		lt.reference,
+		lt.created_at,
+		lt.posted_at 
+		FROM ledger_entries le 
+		JOIN ledger_transactions lt 
+		ON lt.id = le.transaction_id 
+		WHERE le.account_id = $1 AND lt.transaction_status = 'posted'
+		ORDER BY lt.posted_at DESC, lt.id DESC
+		LIMIT $2
+		OFFSET $3
+		`, accountID, limit, offset)
+		if err != nil {
+			return nil, fmt.Errorf("list account transactions: %w", err)
+		}
+		defer rows.Close()
+
+		transactions := make([]AccountTransaction, 0)
+		for rows.Next() {
+			var tx AccountTransaction 
+			err := rows.Scan(
+				&tx.TransactionID,
+				&tx.TransactionType,
+				&tx.EntryType,
+				&tx.AmountMinor,
+				&tx.Currency,
+				&tx.Currency,
+				&tx.Reference,
+				&tx.CreatedAt,
+				&tx.PostedAt,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("scan account transaction: %w", err)
+			}
+
+			transactions = append(transactions, tx)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate account transactions: %w", err)
+		}
+
+		return transactions, nil
 }
