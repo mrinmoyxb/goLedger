@@ -36,14 +36,24 @@ type TransactionInfo struct {
 }
 
 type AccountTransaction struct {
-	TransactionID        int64
-	TransactionType      string
-	EntryType            string
-	AmountMinor          int64
-	Currency             string
-	Reference            string
-	CreatedAt            time.Time
-	PostedAt             time.Time
+	TransactionID   int64
+	TransactionType string
+	EntryType       string
+	AmountMinor     int64
+	Currency        string
+	Reference       string
+	CreatedAt       time.Time
+	PostedAt        time.Time
+}
+
+type TransactionStatusInfo struct {
+	ID                int64
+	IdempotencyKey    string
+	TransactionType   string
+	AmountMinor       int64
+	Currency          string
+	TransactionStatus string
+	CreatedAt         int64
 }
 
 type LedgerRepository struct {
@@ -245,11 +255,11 @@ func (r *LedgerRepository) GetLedgerTransactionByID(ctx context.Context, transac
 	return transaction, nil
 }
 
-func (r *LedgerRepository) GetLedgerTransactionByReference(ctx context.Context, reference string) (*TransactionInfo, error){
+func (r *LedgerRepository) GetLedgerTransactionByReference(ctx context.Context, reference string) (*TransactionInfo, error) {
 	transaction := &TransactionInfo{}
 
 	err := r.db.QueryRow(ctx,
-	`SELECT id, idempotency_key, request_hash, transaction_type, amount_minor, currency, transaction_status, reference, 
+		`SELECT id, idempotency_key, request_hash, transaction_type, amount_minor, currency, transaction_status, reference, 
 		reverses_transaction_id, created_at FROM ledger_transaction WHERE reference = $1 
 		RETURNING id, idempotency_key, request_hash, transaction_type, amount_minor, currency, transaction_status, reference,
 		reverses_transaction_id, created_at`, reference,
@@ -276,62 +286,106 @@ func (r *LedgerRepository) GetLedgerTransactionByReference(ctx context.Context, 
 	return transaction, nil
 }
 
-func (r *LedgerRepository) ListTransactionsByAccount(ctx context.Context, accountID int64, limit int, offset int) ([]AccountTransaction, error){
+func (r *LedgerRepository) ListTransactionsByAccount(ctx context.Context, accountID int64, limit int, offset int) ([]AccountTransaction, error) {
 	if accountID <= 0 {
 		return nil, errors.New("invalid account id")
 	}
 
+	if limit <= 0 || limit > 100 {
+		return nil, errors.New("invalid limit")
+	}
+
+	if offset < 0 {
+		return nil, errors.New("invalid offset")
+	}
+
 	rows, err := r.db.Query(ctx,
-	`SELECT 
-		lt.id,
-		lt.transaction_type,
-		le.entry_type,
-		le.amount_minor,
-		lt.currency,
-		lt.reference,
-		lt.created_at,
-		lt.posted_at 
-		FROM ledger_entries le 
-		JOIN ledger_transactions lt 
-		ON lt.id = le.transaction_id 
-		WHERE le.account_id = $1 AND lt.transaction_status = 'posted'
+		`SELECT lt.id, lt.transaction_type, le.entry_type, le.amount_minor, lt.currency, lt.reference, lt.created_at, lt.posted_at 
+		FROM ledger_entries le JOIN ledger_transactions lt ON lt.id = le.transaction_id WHERE le.account_id = $1 AND lt.transaction_status = 'posted'
 		ORDER BY lt.posted_at DESC, lt.id DESC
-		LIMIT $2
-		OFFSET $3
-		`, accountID, limit, offset)
+		LIMIT $2 OFFSET $3`,
+		accountID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list account transactions: %w", err)
+	}
+	defer rows.Close()
+
+	transactions := make([]AccountTransaction, 0)
+	for rows.Next() {
+		var tx AccountTransaction
+		err := rows.Scan(
+			&tx.TransactionID,
+			&tx.TransactionType,
+			&tx.EntryType,
+			&tx.AmountMinor,
+			&tx.Currency,
+			&tx.Currency,
+			&tx.Reference,
+			&tx.CreatedAt,
+			&tx.PostedAt,
+		)
 		if err != nil {
-			return nil, fmt.Errorf("list account transactions: %w", err)
-		}
-		defer rows.Close()
-
-		transactions := make([]AccountTransaction, 0)
-		for rows.Next() {
-			var tx AccountTransaction 
-			err := rows.Scan(
-				&tx.TransactionID,
-				&tx.TransactionType,
-				&tx.EntryType,
-				&tx.AmountMinor,
-				&tx.Currency,
-				&tx.Currency,
-				&tx.Reference,
-				&tx.CreatedAt,
-				&tx.PostedAt,
-			)
-			if err != nil {
-				return nil, fmt.Errorf("scan account transaction: %w", err)
-			}
-
-			transactions = append(transactions, tx)
+			return nil, fmt.Errorf("scan account transaction: %w", err)
 		}
 
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("iterate account transactions: %w", err)
-		}
+		transactions = append(transactions, tx)
+	}
 
-		return transactions, nil
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate account transactions: %w", err)
+	}
+
+	return transactions, nil
 }
 
-// func (r *LedgerRepository) ListTransactionsByStatus(ctx context.Context, status string) ([]AccountTransaction, error) {
+func (r *LedgerRepository) ListTransactionsByStatus(ctx context.Context, status string, limit int, offset int) ([]TransactionStatusInfo, error) {
+	if status != "pending" && status != "posted" && status != "failed" {
+		return nil, errors.New("invalid transaction status")
+	}
 
-// }
+	if limit <= 0 || limit > 100 {
+		return nil, errors.New("invalid limit")
+	}
+
+	if offset < 0 {
+		return nil, errors.New("invalid offset")
+	}
+
+	rows, err := r.db.Query(ctx,
+		`SELECT id, idempotency_key, transaction_type, amount_minor, currency, transaction_status created_at FROM ledger_transactions
+		WHERE transaction_status = $1 ORDER BY created_at DESC, id DESC
+		LIMIT $2 OFFSET $3`,
+		status,
+		limit,
+		offset,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("fetch transaction by status: %w", err)
+	}
+
+	defer rows.Close()
+
+	transactions := make([]TransactionStatusInfo, 0)
+	for rows.Next() {
+		var tx TransactionStatusInfo
+		err := rows.Scan(
+			&tx.ID,
+			&tx.IdempotencyKey,
+			&tx.TransactionType,
+			&tx.AmountMinor,
+			&tx.Currency,
+			&tx.TransactionStatus,
+			&tx.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan transaction: %w", err)
+		}
+		transactions = append(transactions, tx)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate transactions by status: %w", err)
+	}
+
+	return transactions, nil
+}
