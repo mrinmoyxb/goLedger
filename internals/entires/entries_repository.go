@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"goLedger/internals/transactions"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,6 +18,15 @@ type LedgerEntry struct {
 	Currency      string
 	EntryType     string
 	AmountMinor   int64
+}
+
+type LedgerEntryInfo struct {
+	TransactionID int64
+	AccountID     int64
+	Currency      string
+	EntryType     string
+	AmountMinor   int64
+	CreatedAt     time.Time
 }
 
 type EntriesRepository struct {
@@ -40,11 +51,11 @@ func (r *EntriesRepository) CreateLedgerEntry(ctx context.Context, l LedgerEntry
 	}
 
 	if l.EntryType != "debit" && l.EntryType != "credit" {
-		return -1, errors.New("invalid entry type")
+		return 0, errors.New("invalid entry type")
 	}
 
 	if l.AmountMinor <= 0 {
-		return -1, errors.New("invalid amount")
+		return 0, errors.New("invalid amount")
 	}
 
 	var entryID int64
@@ -62,4 +73,80 @@ func (r *EntriesRepository) CreateLedgerEntry(ctx context.Context, l LedgerEntry
 	}
 	
 	return entryID, nil
+}
+
+func (r *EntriesRepository) CreateLedgerEntries(ctx context.Context, l []LedgerEntry, tx pgx.Tx) (int64, error) {
+	if len(l) == 0 {
+		return 0, nil
+	}
+
+	query := `INSERT INTO ledger_entries (transaction_id, account_id, currency, entry_type, amount_minor) VALUES`
+	args := make([]any, 0, len(l)*5)
+
+	for i, entry := range l {
+		if i > 0 {
+			query += ", "
+		}
+		offset := i * 5
+		query += fmt.Sprintf(
+			"($%d, $%d, $%d, $%d, $%d)",
+			offset+1,
+			offset+2,
+			offset+3,
+			offset+4,
+			offset+5,
+		)
+
+		args = append(args, entry.TransactionID, entry.AccountID, entry.Currency, entry.EntryType, entry.AmountMinor)
+	}
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+
+	return tag.RowsAffected(), nil
+}
+
+func (r *EntriesRepository) GetEntriesByTransactionID(ctx context.Context, id int64) ([]LedgerEntryInfo, error) {
+	if id <= 0 {
+		return nil, errors.New("invalid transaction id")
+	}
+
+	rows, err := r.db.Query(ctx, 
+		`SELECT transaction_id, account_id, currency, entry_type, amount_minor, created_at WHERE transaction_id = $1`,
+		id,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows){
+			return nil, errors.New("no rows available")
+		}
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	entries := make([]LedgerEntryInfo, 0)
+	for rows.Next() {
+		var entry LedgerEntryInfo
+		err := rows.Scan(
+			&entry.TransactionID,
+			&entry.AccountID,
+			&entry.Currency,
+			&entry.AmountMinor,
+			&entry.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan entries: %w", err)
+		}
+
+		entries = append(entries, entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate entries: %w", err)
+	}
+
+	return entries, nil
+
 }
