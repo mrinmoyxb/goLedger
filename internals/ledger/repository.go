@@ -311,9 +311,9 @@ func (r *LedgerRepository) GetLedgerTransactionWithEntries(ctx context.Context, 
 	rows, err := r.db.Query(ctx,
 		`SELECT lt.id, le.account_id, le.currency, le.entry_type, le.amount_minor, le.created_at FROM ledger_transactions lt JOIN ledger_entries le ON lt.id = le.transaction_id
 		WHERE lt.id = $1 ORDER BY le.created_at DESC, le.id DESC
-		LIMIT $1 OFFSET $2`, 
-		id, 
-		limit, 
+		LIMIT $1 OFFSET $2`,
+		id,
+		limit,
 		offset)
 
 	if err != nil {
@@ -345,6 +345,58 @@ func (r *LedgerRepository) GetLedgerTransactionWithEntries(ctx context.Context, 
 	}
 
 	return entries, nil
+}
+
+func (r *LedgerRepository) UpdateTransactionStatus(ctx context.Context, id int64, status string) error {
+	if id <= 0 {
+		return errors.New("invalid transaction id")
+	}
+
+	if status != "failed" {
+		return errors.New("invalid status, only failed status can be updated through this function")
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var currentStatus string
+
+	err = tx.QueryRow(ctx,
+		`SELECT transaction_status FROM ledger_transactions WHERE id = $1 FOR UPDATE`,
+		id,
+	).Scan(&currentStatus)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("transactio not found")
+		}
+		return fmt.Errorf("failed to fetch transaction: %w", err)
+	}
+
+	if currentStatus != "pending" {
+		return fmt.Errorf(
+			"cannot change transaction status from %s to %s",
+			currentStatus,
+			status,
+		)
+	}
+
+	_, err = tx.Exec(ctx,
+		`UPDATE ledger_transactions SET transactio_status = $1 WHERE id = $2`,
+		status,
+		id)
+
+	if err != nil {
+		return fmt.Errorf("failed to update transaction status: %w", err)
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
 }
 
 func (r *LedgerRepository) ListTransactionsByAccount(ctx context.Context, accountID int64, limit int, offset int) ([]AccountTransaction, error) {
