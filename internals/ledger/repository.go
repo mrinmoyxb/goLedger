@@ -56,6 +56,15 @@ type TransactionStatusInfo struct {
 	CreatedAt         int64
 }
 
+type TransactionEntries struct {
+	ID          int64
+	AccountID   int64
+	Currency    int64
+	EntryType   string
+	AmountMinor int64
+	CreatedAt   time.Time
+}
+
 type LedgerRepository struct {
 	db *pgxpool.Pool
 }
@@ -284,6 +293,58 @@ func (r *LedgerRepository) GetLedgerTransactionByReference(ctx context.Context, 
 	}
 
 	return transaction, nil
+}
+
+func (r *LedgerRepository) GetLedgerTransactionWithEntries(ctx context.Context, id int64, limit int, offset int) ([]TransactionEntries, error) {
+	if id <= 0 {
+		return nil, errors.New("invalid transaction id")
+	}
+
+	if limit <= 0 || limit > 100 {
+		return nil, errors.New("invalid limit")
+	}
+
+	if offset < 0 {
+		return nil, errors.New("invalid offset")
+	}
+
+	rows, err := r.db.Query(ctx,
+		`SELECT lt.id, le.account_id, le.currency, le.entry_type, le.amount_minor, le.created_at FROM ledger_transactions lt JOIN ledger_entries le ON lt.id = le.transaction_id
+		WHERE lt.id = $1 ORDER BY le.created_at DESC, le.id DESC
+		LIMIT $1 OFFSET $2`, 
+		id, 
+		limit, 
+		offset)
+
+	if err != nil {
+		return nil, fmt.Errorf("fetch transaction entries: %w", err)
+	}
+
+	defer rows.Close()
+
+	entries := make([]TransactionEntries, 0)
+	for rows.Next() {
+		var tx TransactionEntries
+		err := rows.Scan(
+			&tx.ID,
+			&tx.AccountID,
+			&tx.Currency,
+			&tx.EntryType,
+			&tx.AmountMinor,
+			&tx.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan transaction entries: %w", err)
+		}
+
+		entries = append(entries, tx)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate transactions entries: %w", err)
+	}
+
+	return entries, nil
 }
 
 func (r *LedgerRepository) ListTransactionsByAccount(ctx context.Context, accountID int64, limit int, offset int) ([]AccountTransaction, error) {
