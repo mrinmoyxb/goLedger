@@ -331,3 +331,7 @@ func (r *LedgerRepository) ListTransactionsByAccount(ctx context.Context, accoun
 
 		return transactions, nil
 }
+
+// func (r *LedgerRepository) ListTransactionsByStatus(ctx context.Context, status string) ([]AccountTransaction, error) {
+
+// }
