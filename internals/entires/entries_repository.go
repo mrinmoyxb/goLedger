@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"goLedger/internals/transactions"
 	"strings"
 	"time"
 
@@ -108,45 +107,111 @@ func (r *EntriesRepository) CreateLedgerEntries(ctx context.Context, l []LedgerE
 	return tag.RowsAffected(), nil
 }
 
-func (r *EntriesRepository) GetEntriesByTransactionID(ctx context.Context, id int64) ([]LedgerEntryInfo, error) {
+func (r *EntriesRepository) GetEntriesByTransactionID(ctx context.Context, id int64, limit int, offset int) ([]LedgerEntryInfo, error) {
 	if id <= 0 {
 		return nil, errors.New("invalid transaction id")
 	}
 
+	if limit <= 0 || limit > 100 {
+		return nil, errors.New("invalid limit")
+	}
+
+	if offset < 0 {
+		return nil, errors.New("invalid offset")
+	}
+
 	rows, err := r.db.Query(ctx, 
-		`SELECT transaction_id, account_id, currency, entry_type, amount_minor, created_at WHERE transaction_id = $1`,
+		`SELECT transaction_id, account_id, currency, entry_type, amount_minor, created_at 
+			FROM ledger_entries 
+			WHERE transaction_id = $1 
+			ORDER BY id ASC
+			LIMIT $2 OFFSET $3`,
 		id,
+		limit,
+		offset,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows){
-			return nil, errors.New("no rows available")
-		}
-		return nil, err
+		return nil, fmt.Errorf("get ledger entries: %w", err)
 	}
 
 	defer rows.Close()
 
 	entries := make([]LedgerEntryInfo, 0)
+
 	for rows.Next() {
 		var entry LedgerEntryInfo
 		err := rows.Scan(
 			&entry.TransactionID,
 			&entry.AccountID,
 			&entry.Currency,
+			&entry.EntryType,
 			&entry.AmountMinor,
 			&entry.CreatedAt,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("scan entries: %w", err)
+			return nil, fmt.Errorf("scan ledger entry: %w", err)
 		}
 
 		entries = append(entries, entry)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate entries: %w", err)
+		return nil, fmt.Errorf("iterate ledger entries: %w", err)
 	}
 
 	return entries, nil
+}
 
+func (r *EntriesRepository) GetEntriesByAccountID(ctx context.Context, id int64, limit int, offset int) ([]LedgerEntryInfo, error) {
+	if id <=0 {
+		return nil, errors.New("invalid account id")
+	}
+
+	if limit <= 0 || limit > 100 {
+		return nil, errors.New("invalid limit")
+	}
+
+	if offset < 0 {
+		return nil, errors.New("invalid offset")
+	}
+
+	rows, err := r.db.Query(ctx,
+	`SELECT transaction_id, account_id, currency, entry_type, amount_minor, created_at
+		FROM ledger_entries
+		WHERE account_id = $1 
+		ORDER BY id ASC
+		LIMIT $2 OFFSET $3`,
+		id,
+		limit,
+		offset,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get ledger entries: %w", err)
+	}
+
+	defer rows.Close()
+
+	entries := make([]LedgerEntryInfo, 0)
+
+	for rows.Next() {
+		var entry LedgerEntryInfo
+		err := rows.Scan(
+			&entry.TransactionID,
+			&entry.AccountID,
+			&entry.Currency,
+			&entry.EntryType,
+			&entry.AmountMinor,
+			&entry.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan ledger entry: %w", err)
+		}
+		entries = append(entries, entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate ledger entries: %w", err)
+	}
+
+	return entries, nil
 }
