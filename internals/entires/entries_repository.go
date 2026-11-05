@@ -285,10 +285,75 @@ func (r *EntriesRepository) SumEntriesByAccountID(ctx context.Context, id int64)
 	return sum, nil
 }
 
-func (r *EntriesRepository) SumDebitsAndCreditsByTransactionID(ctx context.Context) {
+func (r *EntriesRepository) SumDebitsAndCreditsByTransactionID(ctx context.Context, id int64) (int64, int64, error) {
+	if id <= 0 {
+		return 0, 0, errors.New("invalid transaction id")
+	}
 
+	var totalDebit int64
+	var totalCredit int64
+
+	err := r.db.QueryRow(ctx,
+	`SELECT 
+		COALESCE(
+			SUM(CASE WHEN entry_type = 'debit' THEN amount_minor ELSE 0 END), 0
+		) AS total_debits,
+		COALESCE(
+			SUM(CASE WHEN entry_type = 'credit' THEN amount_minor ELSE 0 END), 0
+		) AS total_credits
+	FROM ledger_entries
+	WHERE transaction_id = $1`, 
+	id).Scan(&totalDebit, &totalCredit)
+
+	if err != nil {
+		return 0, 0, fmt.Errorf("sum debit and credit entries: %w", err)
+	}
+
+	return totalDebit, totalCredit, nil
 }
 
-func (r *EntriesRepository) GetEntriesByReference(ctx context.Context) {
+func (r *EntriesRepository) GetEntriesByReference(ctx context.Context, refID int64) ([]LedgerEntryInfo, error){
+	if refID <= 0 {
+		return nil, errors.New("invalid reference id")
+	}
 
+	rows, err := r.db.Query(ctx,
+		`SELECT e.transaction_id, e.account_id, e.currency, e.entry_type, e.amount_minor, e.created_at
+			FROM ledger_entries e J
+			OIN ledger_transactions t 
+				ON e.transaction_id = t.id 
+			WHERE t.reference = $1
+			ORDER BY e.id ASC`,
+		refID,
+	)
+	if err != nil {
+        return nil, fmt.Errorf("fetch entries by reference: %w", err)
+    }
+
+	defer rows.Close()
+
+	entries := make([]LedgerEntryInfo, 0)
+
+	for rows.Next() {
+		var entry LedgerEntryInfo
+		err := rows.Scan(
+			&entry.TransactionID,
+			&entry.AccountID,
+			&entry.Currency,
+			&entry.EntryType,
+			&entry.AmountMinor,
+			&entry.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan entries error: %w", err)
+		}
+
+		entries = append(entries, entry)
+	}
+
+	if err := rows.Err(); err != nil {
+        return nil, fmt.Errorf("iterate entries: %w", err)
+    }
+
+	return entries, nil
 }
