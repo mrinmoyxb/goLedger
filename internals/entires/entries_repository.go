@@ -162,7 +162,50 @@ func (r *EntriesRepository) GetEntriesByTransactionID(ctx context.Context, id in
 	return entries, nil
 }
 
-func (r *EntriesRepository) GetEntriesByAccountID(ctx context.Context, id int64, limit int, offset int) ([]LedgerEntryInfo, error) {
+func (r *EntriesRepository) GetEntriesByAccountID(ctx context.Context, id int64) ([]LedgerEntryInfo, error) {
+	if id <=0 {
+		return nil, errors.New("invalid account id")
+	}
+
+	rows, err := r.db.Query(ctx,
+	`SELECT transaction_id, account_id, currency, entry_type, amount_minor, created_at
+		FROM ledger_entries
+		WHERE account_id = $1 
+		ORDER BY id ASC`,
+		id,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get ledger entries: %w", err)
+	}
+
+	defer rows.Close()
+
+	entries := make([]LedgerEntryInfo, 0)
+
+	for rows.Next() {
+		var entry LedgerEntryInfo
+		err := rows.Scan(
+			&entry.TransactionID,
+			&entry.AccountID,
+			&entry.Currency,
+			&entry.EntryType,
+			&entry.AmountMinor,
+			&entry.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan ledger entry: %w", err)
+		}
+		entries = append(entries, entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate ledger entries: %w", err)
+	}
+
+	return entries, nil
+}
+
+func (r *EntriesRepository) GetEntriesByAccountIDpaginated(ctx context.Context, id int64, limit int, offset int) ([]LedgerEntryInfo, error) {
 	if id <=0 {
 		return nil, errors.New("invalid account id")
 	}
@@ -214,4 +257,38 @@ func (r *EntriesRepository) GetEntriesByAccountID(ctx context.Context, id int64,
 	}
 
 	return entries, nil
+}
+
+func (r *EntriesRepository) SumEntriesByAccountID(ctx context.Context, id int64) (int64, error) {
+	if id <=0 {
+		return 0, errors.New("invalid account ID")
+	}
+
+	var sum int64
+
+	err := r.db.QueryRow(ctx,
+	`SELECT COALESCE(SUM(
+		CASE 
+			WHEN entry_type = 'credit' THEN amount_minor
+			WHEN entry_type = 'debit' THEN -amount_minor
+		END
+		), 0)
+		FROM ledger_entries
+		WHERE account_id = $1
+	`, id,
+	).Scan(&sum)
+
+	if err != nil {
+		return 0, fmt.Errorf("sum of ledger entries: %w", err)
+	}
+
+	return sum, nil
+}
+
+func (r *EntriesRepository) SumDebitsAndCreditsByTransactionID(ctx context.Context) {
+
+}
+
+func (r *EntriesRepository) GetEntriesByReference(ctx context.Context) {
+
 }
